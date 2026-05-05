@@ -720,24 +720,29 @@ def test_complete_text_returns_raw_content(mock_instructor_client):
 
 
 def test_complete_text_appends_perplexity_citations(mock_instructor_client):
-    """Citations returned by Perplexity are appended as a numbered sources section."""
+    """Citations returned by Perplexity are enriched via enrich_citations then appended."""
     mock_response = MagicMock()
     mock_response.choices = [MagicMock()]
     mock_response.choices[0].message.content = "Covariate balance matters [1][2]."
     mock_response.citations = [
-        "https://example.com/paper1",
+        "https://doi.org/10.1234/paper1",
+        "https://example.com/paper2",
+    ]
+    enriched = [
+        "Smith, J. (2020). A great paper. *J. Stats*. https://doi.org/10.1234/paper1",
         "https://example.com/paper2",
     ]
 
     with (
         patch("coarse.llm._sanitized_completion", return_value=mock_response),
         patch("coarse.llm.litellm.completion_cost", return_value=0.01),
+        patch("coarse.llm.enrich_citations", return_value=enriched),
     ):
         client = LLMClient(model=TEST_MODEL, config=CoarseConfig())
         result = client.complete_text(messages=[{"role": "user", "content": "hi"}])
 
     assert "**Sources:**" in result
-    assert "1. https://example.com/paper1" in result
+    assert "1. Smith, J. (2020). A great paper." in result
     assert "2. https://example.com/paper2" in result
     assert result.startswith("Covariate balance matters [1][2].")
 

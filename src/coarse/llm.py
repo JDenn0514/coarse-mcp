@@ -23,6 +23,7 @@ from coarse.config import (
     load_config,
     resolve_api_key,
 )
+from coarse.crossref import enrich_citations
 from coarse.models import (
     DEFAULT_MODEL,
     JSON_MODE_PREFIXES,
@@ -599,8 +600,9 @@ class LLMClient:
             raise ValueError(f"Model {self._model} returned empty response")
         citations = getattr(response, "citations", None) or []
         if citations:
+            enriched = enrich_citations(citations)
             sources = "\n\n**Sources:**\n" + "\n".join(
-                f"{i + 1}. {url}" for i, url in enumerate(citations)
+                f"{i + 1}. {ref}" for i, ref in enumerate(enriched)
             )
             content = content + sources
         return content.strip()

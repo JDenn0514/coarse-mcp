@@ -178,3 +178,9 @@ def test_get_config_path():
     assert path.parts[-1] == "config.toml"
     assert path.parts[-2] == ".coarse"
     assert str(path).startswith(str(Path.home()))
+
+
+def test_provider_env_vars_includes_perplexity():
+    from coarse.config import PROVIDER_ENV_VARS
+    assert "perplexity" in PROVIDER_ENV_VARS
+    assert PROVIDER_ENV_VARS["perplexity"] == "PERPLEXITY_API_KEY"

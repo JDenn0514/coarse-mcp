@@ -36,6 +36,7 @@ PROVIDER_ENV_VARS: dict[str, str] = {
     "together": "TOGETHER_API_KEY",
     "azure": "AZURE_API_KEY",
     "openrouter": "OPENROUTER_API_KEY",
+    "perplexity": "PERPLEXITY_API_KEY",
 }
 
 
