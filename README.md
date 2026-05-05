@@ -1,10 +1,9 @@
-# coarse
+# coarse-mcp
 
-[![CI](https://github.com/Davidvandijcke/coarse/actions/workflows/ci.yml/badge.svg)](https://github.com/Davidvandijcke/coarse/actions/workflows/ci.yml)
-[![PyPI](https://img.shields.io/pypi/v/coarse-ink)](https://pypi.org/project/coarse-ink/)
-[![Downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fcoarse.ink%2Fapi%2Fdownloads)](https://pypistats.org/packages/coarse-ink)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/github/license/Davidvandijcke/coarse)](LICENSE)
+
+> **Based on [coarse](https://github.com/Davidvandijcke/coarse) by David Vandijcke**, a free open-source AI academic paper reviewer. This fork adds an MCP server (`coarse-mcp`) that exposes the chat reviewer and a standalone literature search tool as MCP tools usable from Claude Code and other MCP clients. See [docs/mcp.md](docs/mcp.md) for setup.
 
 Free, open-source AI academic paper reviewer that outperforms popular paid AI reviewers.
 
