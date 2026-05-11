@@ -5,6 +5,7 @@ Never raises on network failure — returns path=None with fetch_source='not_fou
 """
 from __future__ import annotations
 
+import difflib
 import logging
 import re
 import urllib.parse
@@ -35,11 +36,68 @@ _OPENALEX = (
 _TIMEOUT = 15
 _DOWNLOAD_TIMEOUT = 60
 _HEADERS = {"User-Agent": "coarse-ink/1.0 (mailto:coarse@example.com)"}
+# Minimum normalized title similarity to accept a resolver result.
+# Prevents wrong-paper matches when keyword search returns unrelated papers.
+_MIN_TITLE_SIMILARITY = 0.6
+# Patterns for locating PDF links in landing page HTML. Checked in order.
+_PDF_PATTERNS = [
+    # Standard academic citation meta tag (journals, Pew, NORC, institutional sites)
+    re.compile(
+        r'<meta[^>]+name=["\']citation_pdf_url["\'][^>]+content=["\']([^"\']+)["\']',
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+name=["\']citation_pdf_url["\']',
+        re.IGNORECASE,
+    ),
+    # Direct href to a .pdf file
+    re.compile(r'href=["\']([^"\']*\.pdf(?:[?#][^"\']*)?)["\']', re.IGNORECASE),
+]
 
 
 def _slug(text: str) -> str:
     """Filesystem-safe slug, max 60 chars."""
     return re.sub(r"[^a-z0-9]+", "_", text.lower())[:60].strip("_")
+
+
+def _extract_pdf_from_landing_page(page_url: str, html: str) -> str | None:
+    """Return the first PDF URL found in landing page HTML, resolved to absolute."""
+    for pattern in _PDF_PATTERNS:
+        m = pattern.search(html)
+        if m:
+            return urllib.parse.urljoin(page_url, m.group(1))
+    return None
+
+
+def _resolve_to_pdf(url: str) -> str | None:
+    """Confirm url is a PDF or extract a direct PDF link from a landing page.
+
+    Streams the response so large PDFs are not read into memory twice.
+    Returns the URL to pass to _download, or None if no PDF is reachable.
+    """
+    try:
+        with requests.get(
+            url, timeout=_TIMEOUT, headers=_HEADERS, stream=True
+        ) as resp:
+            if resp.status_code != 200:
+                return None
+            ctype = resp.headers.get("Content-Type", "")
+            if "pdf" in ctype.lower():
+                return url
+            if "html" not in ctype.lower():
+                return None
+            html = resp.text
+        return _extract_pdf_from_landing_page(url, html)
+    except Exception:
+        logger.debug("Landing page resolution failed for %s", url, exc_info=True)
+        return None
+
+
+def _title_similar(query: str, result_title: str) -> bool:
+    """Return True if result_title is similar enough to query to be trusted."""
+    q = re.sub(r"[^a-z0-9 ]", "", query.lower()).strip()
+    r = re.sub(r"[^a-z0-9 ]", "", result_title.lower()).strip()
+    return difflib.SequenceMatcher(None, q, r).ratio() >= _MIN_TITLE_SIMILARITY
 
 
 def _s2_meta(data: dict) -> dict:
@@ -90,6 +148,11 @@ def _try_semantic_scholar_title(title: str) -> tuple[str | None, dict]:
         if not items:
             return None, {}
         item = items[0]
+        if not _title_similar(title, item.get("title") or ""):
+            logger.debug(
+                "S2 title mismatch: wanted %r, got %r", title, item.get("title")
+            )
+            return None, {}
         pdf = (item.get("openAccessPdf") or {}).get("url")
         return pdf, item
     except Exception:
@@ -106,7 +169,14 @@ def _try_openalex_title(title: str, email: str) -> str | None:
         results = resp.json().get("results") or []
         if not results:
             return None
-        loc = results[0].get("primary_location") or {}
+        result = results[0]
+        result_title = result.get("title") or result.get("display_name") or ""
+        if not _title_similar(title, result_title):
+            logger.debug(
+                "OpenAlex title mismatch: wanted %r, got %r", title, result_title
+            )
+            return None
+        loc = result.get("primary_location") or {}
         return loc.get("pdf_url") or loc.get("landing_page_url")
     except Exception:
         logger.debug("OpenAlex title search failed for %s", title, exc_info=True)
@@ -135,6 +205,10 @@ def _download(url: str, dest: Path) -> bool:
             url, timeout=_DOWNLOAD_TIMEOUT, stream=True, headers=_HEADERS
         )
         resp.raise_for_status()
+        ctype = resp.headers.get("Content-Type", "")
+        if "html" in ctype.lower():
+            logger.debug("Expected PDF but got HTML from %s", url)
+            return False
         dest.write_bytes(resp.content)
         return True
     except Exception:
@@ -199,6 +273,11 @@ def fetch_paper(
         if pdf_url:
             fetch_source = "direct"
 
+    if not pdf_url:
+        return {**meta, "path": None, "fetch_source": "not_found"}
+
+    # Confirm the URL serves a PDF — follow landing pages if needed.
+    pdf_url = _resolve_to_pdf(pdf_url)
     if not pdf_url:
         return {**meta, "path": None, "fetch_source": "not_found"}
 
