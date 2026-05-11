@@ -184,3 +184,15 @@ def test_provider_env_vars_includes_perplexity():
     from coarse.config import PROVIDER_ENV_VARS
     assert "perplexity" in PROVIDER_ENV_VARS
     assert PROVIDER_ENV_VARS["perplexity"] == "PERPLEXITY_API_KEY"
+
+
+def test_coarse_config_has_unpaywall_email_field():
+    from coarse.config import CoarseConfig
+    config = CoarseConfig()
+    assert config.unpaywall_email == ""
+
+
+def test_coarse_config_unpaywall_email_round_trips():
+    from coarse.config import CoarseConfig
+    config = CoarseConfig(unpaywall_email="test@example.com")
+    assert config.unpaywall_email == "test@example.com"

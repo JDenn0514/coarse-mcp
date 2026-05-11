@@ -46,6 +46,7 @@ class CoarseConfig(BaseModel):
     extraction_qa: bool = True
     max_cost_usd: float = 10.0
     api_keys: dict[str, str] = Field(default_factory=dict)
+    unpaywall_email: str = ""
 
 
 def get_config_path() -> Path:
