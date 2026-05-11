@@ -12,7 +12,11 @@ from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
+from coarse.agents.citation_verify import CitationVerifyAgent
 from coarse.chat import ChatSession, run_literature_query
+from coarse.extraction import extract_file
+from coarse.fetch import fetch_paper as _fetch_paper
+from coarse.llm import LLMClient
 
 mcp = FastMCP("coarse-chat")
 
@@ -135,6 +139,95 @@ def end_session(session_id: str) -> str:
         raise KeyError(f"unknown session: {session_id}")
     del _sessions[session_id]
     return f"Session {session_id} ended."
+
+
+@mcp.tool()
+def fetch_paper(
+    doi: str | None = None,
+    title: str | None = None,
+    output_dir: str = ".",
+) -> dict:
+    """Download a paper PDF by DOI or title.
+
+    Resolution order: Unpaywall -> Semantic Scholar -> OpenAlex -> direct DOI fetch.
+    At least one of doi or title must be provided.
+
+    Args:
+        doi: DOI string (e.g. "10.1234/example"). Optional if title is given.
+        title: Full paper title. Used when DOI is unavailable or all DOI-based
+            sources fail.
+        output_dir: Directory to save the downloaded PDF. Created if it does
+            not exist. Defaults to current directory.
+
+    Returns:
+        Dict with keys: path (str or None), title, authors, year, doi,
+        fetch_source ("unpaywall"|"semantic_scholar"|"openalex"|"direct"|
+        "not_found"). path is None when no PDF could be retrieved.
+    """
+    return _fetch_paper(doi=doi, title=title, output_dir=output_dir)
+
+
+@mcp.tool()
+def extract_paper(
+    paper_path: str,
+    output_path: str | None = None,
+) -> dict:
+    """Convert a PDF to markdown using coarse's extraction infrastructure.
+
+    Uses docling locally for clean PDFs (free). Falls back to Mistral OCR via
+    OpenRouter for scanned documents (incurs cost).
+
+    Args:
+        paper_path: Absolute path to the PDF file.
+        output_path: Where to save the markdown. Defaults to same directory
+            as the PDF with a .md extension.
+
+    Returns:
+        Dict with keys: path (absolute path to the .md file), garble_ratio
+        (float 0.0-1.0; high values indicate poor extraction quality).
+    """
+    pdf = Path(paper_path)
+    if not pdf.exists():
+        raise FileNotFoundError(f"paper not found: {pdf}")
+
+    result = extract_file(pdf)
+
+    out = Path(output_path) if output_path else pdf.with_suffix(".md")
+    out.write_text(result.full_markdown, encoding="utf-8")
+
+    return {"path": str(out.resolve()), "garble_ratio": result.garble_ratio}
+
+
+@mcp.tool()
+def verify_citation(
+    paper_markdown_path: str,
+    citation_claim: str,
+) -> dict:
+    """Adversarial two-phase citation accuracy check.
+
+    Phase 1: reads the paper independently (no citation context) and produces
+    a neutral summary. Phase 2: compares that summary against the citation
+    claim using an adversarial reviewer instructed to find mismatches.
+
+    Args:
+        paper_markdown_path: Absolute path to the extracted .md file (not the
+            PDF). Run extract_paper first if you only have a PDF.
+        citation_claim: The claim a document makes about this paper — the
+            sentence or paragraph that cites it.
+
+    Returns:
+        Dict with keys: verdict ("Supports"|"Weak"|"Mismatch"), paper_summary
+        (Phase 1 independent summary), adversarial_notes (what the reviewer
+        found), sop_revision_needed (bool).
+    """
+    md_path = Path(paper_markdown_path)
+    if not md_path.exists():
+        raise FileNotFoundError(f"markdown not found: {md_path}")
+
+    paper_text = md_path.read_text(encoding="utf-8")
+    client = LLMClient()
+    agent = CitationVerifyAgent(client=client)
+    return agent.run(paper_text=paper_text, citation_claim=citation_claim)
 
 
 def main() -> None:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -182,3 +182,118 @@ def test_all_tools_registered_on_mcp() -> None:
         # Fallback for older/newer SDK shapes: dig into the tool manager.
         names = set(mcp._tool_manager._tools.keys())  # type: ignore[attr-defined]
     assert expected.issubset(names), f"missing tools: {expected - names}"
+
+
+# ---------------------------------------------------------------------------
+# fetch_paper tool
+# ---------------------------------------------------------------------------
+
+def test_fetch_paper_tool_registered():
+    from coarse.mcp_server import fetch_paper
+    assert callable(fetch_paper)
+
+
+def test_fetch_paper_tool_delegates_to_fetch_module(tmp_path):
+    from coarse.mcp_server import fetch_paper
+    with patch("coarse.mcp_server._fetch_paper") as mock_fetch:
+        mock_fetch.return_value = {
+            "path": str(tmp_path / "paper.pdf"),
+            "title": "Test",
+            "authors": [],
+            "year": 2013,
+            "doi": "10.x/y",
+            "fetch_source": "unpaywall",
+        }
+        result = fetch_paper(doi="10.x/y", output_dir=str(tmp_path))
+    mock_fetch.assert_called_once_with(doi="10.x/y", title=None, output_dir=str(tmp_path))
+    assert result["fetch_source"] == "unpaywall"
+
+
+# ---------------------------------------------------------------------------
+# extract_paper tool
+# ---------------------------------------------------------------------------
+
+def test_extract_paper_tool_registered():
+    from coarse.mcp_server import extract_paper
+    assert callable(extract_paper)
+
+
+def test_extract_paper_raises_if_file_missing(tmp_path):
+    from coarse.mcp_server import extract_paper
+    with pytest.raises(FileNotFoundError):
+        extract_paper(paper_path=str(tmp_path / "missing.pdf"))
+
+
+def test_extract_paper_writes_markdown_and_returns_path(tmp_path):
+    from coarse.mcp_server import extract_paper
+    from coarse.types import PaperText
+    fake_pdf = tmp_path / "paper.pdf"
+    fake_pdf.write_bytes(b"%PDF fake")
+
+    mock_result = PaperText(full_markdown="# Title\n\nContent.", token_estimate=100, garble_ratio=0.01)
+    with patch("coarse.mcp_server.extract_file", return_value=mock_result):
+        result = extract_paper(paper_path=str(fake_pdf))
+
+    assert result["garble_ratio"] == pytest.approx(0.01)
+    md_path = Path(result["path"])
+    assert md_path.exists()
+    assert md_path.read_text() == "# Title\n\nContent."
+    assert md_path.suffix == ".md"
+
+
+def test_extract_paper_respects_output_path(tmp_path):
+    from coarse.mcp_server import extract_paper
+    from coarse.types import PaperText
+    fake_pdf = tmp_path / "paper.pdf"
+    fake_pdf.write_bytes(b"%PDF fake")
+    custom_out = tmp_path / "custom_output.md"
+
+    mock_result = PaperText(full_markdown="Content.", token_estimate=50, garble_ratio=0.0)
+    with patch("coarse.mcp_server.extract_file", return_value=mock_result):
+        result = extract_paper(
+            paper_path=str(fake_pdf),
+            output_path=str(custom_out),
+        )
+
+    assert Path(result["path"]) == custom_out.resolve()
+    assert custom_out.read_text() == "Content."
+
+
+# ---------------------------------------------------------------------------
+# verify_citation tool
+# ---------------------------------------------------------------------------
+
+def test_verify_citation_tool_registered():
+    from coarse.mcp_server import verify_citation
+    assert callable(verify_citation)
+
+
+def test_verify_citation_raises_if_markdown_missing(tmp_path):
+    from coarse.mcp_server import verify_citation
+    with pytest.raises(FileNotFoundError):
+        verify_citation(
+            paper_markdown_path=str(tmp_path / "missing.md"),
+            citation_claim="Some claim.",
+        )
+
+
+def test_verify_citation_returns_verdict_dict(tmp_path):
+    from coarse.mcp_server import verify_citation
+    fake_md = tmp_path / "paper.md"
+    fake_md.write_text("# Paper\n\nContent.", encoding="utf-8")
+
+    mock_verdict = {
+        "verdict": "Mismatch",
+        "paper_summary": "Paper argues X.",
+        "adversarial_notes": "Claim overstates scope.",
+        "sop_revision_needed": True,
+    }
+    with patch("coarse.mcp_server.CitationVerifyAgent") as MockAgent:
+        MockAgent.return_value.run.return_value = mock_verdict
+        result = verify_citation(
+            paper_markdown_path=str(fake_md),
+            citation_claim="Paper proves universal Y.",
+        )
+
+    assert result["verdict"] == "Mismatch"
+    assert result["sop_revision_needed"] is True
