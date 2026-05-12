@@ -432,7 +432,7 @@ def test_try_openalex_title_accepts_matching_title():
 
 def test_fetch_paper_raises_if_no_doi_or_title(tmp_path):
     from coarse.fetch import fetch_paper
-    with pytest.raises(ValueError, match="doi or title"):
+    with pytest.raises(ValueError, match="doi"):
         fetch_paper(output_dir=str(tmp_path))
 
 
@@ -482,3 +482,66 @@ def test_fetch_paper_filename_includes_year(tmp_path):
                              output_dir=str(tmp_path))
 
     assert result["path"] is not None
+
+
+# ---------------------------------------------------------------------------
+# fetch_paper — url parameter (PDF path)
+# ---------------------------------------------------------------------------
+
+def test_fetch_paper_url_resolves_landing_page_to_pdf(tmp_path):
+    from coarse.fetch import fetch_paper
+    # Simulate: S2 and OpenAlex return nothing; URL is a landing page with
+    # a citation_pdf_url meta tag pointing to a PDF.
+    html_landing = b'<meta name="citation_pdf_url" content="https://pew.org/report.pdf">'
+
+    def mock_get(url, **kwargs):
+        if "semanticscholar" in url:
+            return _mock_response(status=200, json_data={"data": []})
+        if "openalex" in url:
+            return _mock_response(status=200, json_data={"results": []})
+        if "pew.org/report-page" in url:
+            return _mock_response(content=html_landing, content_type="text/html")
+        # PDF download
+        return _mock_response(content=b"%PDF-1.4 fake", content_type="application/pdf")
+
+    with patch("coarse.fetch.requests.get", side_effect=mock_get), \
+         patch("coarse.fetch.urllib.request.urlopen", side_effect=Exception("no")), \
+         patch("coarse.fetch.load_config") as mock_cfg:
+        mock_cfg.return_value.unpaywall_email = "test@example.com"
+        result = fetch_paper(
+            title="Evaluating Online Nonprobability Surveys",
+            url="https://pew.org/report-page",
+            output_dir=str(tmp_path),
+        )
+
+    assert result["path"] is not None
+    assert result["path"].endswith(".pdf")
+    assert result["fetch_source"] == "url"
+    assert Path(result["path"]).exists()
+
+
+def test_fetch_paper_url_direct_pdf_downloads_successfully(tmp_path):
+    from coarse.fetch import fetch_paper
+
+    def mock_get(url, **kwargs):
+        if "semanticscholar" in url:
+            return _mock_response(status=200, json_data={"data": []})
+        if "openalex" in url:
+            return _mock_response(status=200, json_data={"results": []})
+        # URL itself serves a PDF directly
+        return _mock_response(content=b"%PDF-1.4 direct", content_type="application/pdf")
+
+    with patch("coarse.fetch.requests.get", side_effect=mock_get), \
+         patch("coarse.fetch.urllib.request.urlopen", side_effect=Exception("no")), \
+         patch("coarse.fetch.load_config") as mock_cfg:
+        mock_cfg.return_value.unpaywall_email = "test@example.com"
+        result = fetch_paper(
+            title="Mercer Lau Kennedy 2018 weighting",
+            url="https://pew.org/report.pdf",
+            output_dir=str(tmp_path),
+        )
+
+    assert result["path"] is not None
+    assert result["path"].endswith(".pdf")
+    assert result["fetch_source"] == "url"
+    assert Path(result["path"]).exists()

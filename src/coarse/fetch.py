@@ -316,18 +316,19 @@ def _download(url: str, dest: Path) -> bool:
 def fetch_paper(
     doi: str | None = None,
     title: str | None = None,
+    url: str | None = None,
     output_dir: str = ".",
 ) -> dict:
     """Download a paper PDF by DOI or title.
 
-    Resolution order: Unpaywall → Semantic Scholar (DOI) →
-    Semantic Scholar (title) → OpenAlex (title) → direct DOI fetch.
+    Resolution order: Unpaywall → Semantic Scholar → OpenAlex → direct DOI fetch → url.
+    At least one of doi, title, or url must be provided.
 
     Returns a dict with keys: path, title, authors, year, doi, fetch_source.
     path is None and fetch_source is 'not_found' when no PDF could be retrieved.
     """
-    if not doi and not title:
-        raise ValueError("At least one of doi or title must be provided")
+    if not doi and not title and not url:
+        raise ValueError("At least one of doi, title, or url must be provided")
 
     config = load_config()
     email = config.unpaywall_email or "coarse@example.com"
@@ -369,6 +370,24 @@ def fetch_paper(
         pdf_url = _try_direct_doi(doi)
         if pdf_url:
             fetch_source = "direct"
+
+    if not pdf_url and url:
+        resolved = _resolve_to_pdf(url)
+        if resolved:
+            # URL resolved to a confirmed PDF link — download directly.
+            _name = _slug(meta["title"] or title or _slug(url.rstrip("/").split("/")[-1]) or "web_clip")
+            if meta.get("year"):
+                _name = f"{_name}_{meta['year']}"
+            _dest = out_dir / f"{_name}.pdf"
+            if not _download(resolved, _dest):
+                return {**meta, "path": None, "fetch_source": "not_found"}
+            return {**meta, "path": str(_dest.resolve()), "fetch_source": "url"}
+        # URL is HTML-only — extract article text directly to markdown.
+        _name = _slug(meta["title"] or title or _slug(url.rstrip("/").split("/")[-1]) or "web_clip")
+        _md = _fetch_html_as_markdown(url, out_dir, _name)
+        if _md:
+            return {**meta, "path": str(_md.resolve()), "fetch_source": "url"}
+        return {**meta, "path": None, "fetch_source": "not_found"}
 
     if not pdf_url:
         return {**meta, "path": None, "fetch_source": "not_found"}
