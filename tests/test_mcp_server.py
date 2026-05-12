@@ -205,7 +205,7 @@ def test_fetch_paper_tool_delegates_to_fetch_module(tmp_path):
             "fetch_source": "unpaywall",
         }
         result = fetch_paper(doi="10.x/y", output_dir=str(tmp_path))
-    mock_fetch.assert_called_once_with(doi="10.x/y", title=None, output_dir=str(tmp_path))
+    mock_fetch.assert_called_once_with(doi="10.x/y", title=None, url=None, output_dir=str(tmp_path))
     assert result["fetch_source"] == "unpaywall"
 
 

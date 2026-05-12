@@ -145,26 +145,39 @@ def end_session(session_id: str) -> str:
 def fetch_paper(
     doi: str | None = None,
     title: str | None = None,
+    url: str | None = None,
     output_dir: str = ".",
 ) -> dict:
     """Download a paper PDF by DOI or title.
 
     Resolution order: Unpaywall -> Semantic Scholar -> OpenAlex -> direct DOI fetch.
-    At least one of doi or title must be provided.
+    At least one of doi, title, or url must be provided.
+
+    When url is provided it is used as a final fallback if all other sources
+    fail. If the URL serves or links to a PDF it is downloaded as usual. If
+    the URL is an HTML-only page (e.g. a Pew Research article), the article
+    text is extracted with trafilatura and saved as a .md file — in that
+    case no extract_paper call is needed before verify_citation.
 
     Args:
         doi: DOI string (e.g. "10.1234/example"). Optional if title is given.
         title: Full paper title. Used when DOI is unavailable or all DOI-based
             sources fail.
-        output_dir: Directory to save the downloaded PDF. Created if it does
+        url: Direct URL to the paper or its landing page. Used as a final
+            fallback after all other resolvers fail. Supports PDF URLs,
+            HTML landing pages with a citation_pdf_url meta tag, and
+            HTML-only pages (saved as .md via trafilatura).
+        output_dir: Directory to save the downloaded file. Created if it does
             not exist. Defaults to current directory.
 
     Returns:
         Dict with keys: path (str or None), title, authors, year, doi,
         fetch_source ("unpaywall"|"semantic_scholar"|"openalex"|"direct"|
-        "not_found"). path is None when no PDF could be retrieved.
+        "url"|"not_found"). path is None when no file could be retrieved.
+        When fetch_source is "url" and path ends in ".md", the file is
+        already extracted markdown — pass it directly to verify_citation.
     """
-    return _fetch_paper(doi=doi, title=title, output_dir=output_dir)
+    return _fetch_paper(doi=doi, title=title, url=url, output_dir=output_dir)
 
 
 @mcp.tool()
