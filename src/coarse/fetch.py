@@ -372,18 +372,17 @@ def fetch_paper(
             fetch_source = "direct"
 
     if not pdf_url and url:
+        _url_slug = url.rstrip("/").split("/")[-1]
+        _name = _slug(meta["title"] or title or _slug(_url_slug) or "web_clip")
+        if meta.get("year"):
+            _name = f"{_name}_{meta['year']}"
         resolved = _resolve_to_pdf(url)
         if resolved:
-            # URL resolved to a confirmed PDF link — download directly.
-            _name = _slug(meta["title"] or title or _slug(url.rstrip("/").split("/")[-1]) or "web_clip")
-            if meta.get("year"):
-                _name = f"{_name}_{meta['year']}"
             _dest = out_dir / f"{_name}.pdf"
             if not _download(resolved, _dest):
                 return {**meta, "path": None, "fetch_source": "not_found"}
             return {**meta, "path": str(_dest.resolve()), "fetch_source": "url"}
         # URL is HTML-only — extract article text directly to markdown.
-        _name = _slug(meta["title"] or title or _slug(url.rstrip("/").split("/")[-1]) or "web_clip")
         _md = _fetch_html_as_markdown(url, out_dir, _name)
         if _md:
             return {**meta, "path": str(_md.resolve()), "fetch_source": "url"}
