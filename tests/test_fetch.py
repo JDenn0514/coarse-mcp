@@ -545,3 +545,80 @@ def test_fetch_paper_url_direct_pdf_downloads_successfully(tmp_path):
     assert result["path"].endswith(".pdf")
     assert result["fetch_source"] == "url"
     assert Path(result["path"]).exists()
+
+
+# ---------------------------------------------------------------------------
+# fetch_paper — url parameter (HTML-only path)
+# ---------------------------------------------------------------------------
+
+def test_fetch_paper_url_html_only_clips_to_markdown(tmp_path):
+    from coarse.fetch import fetch_paper
+    import types
+
+    def mock_get(url, **kwargs):
+        if "semanticscholar" in url:
+            return _mock_response(status=200, json_data={"data": []})
+        if "openalex" in url:
+            return _mock_response(status=200, json_data={"results": []})
+        # URL is HTML with no PDF link
+        return _mock_response(
+            content=b"<html><body>Article text</body></html>",
+            content_type="text/html",
+        )
+
+    mock_tra = types.SimpleNamespace(
+        fetch_url=lambda u: "<html>Article content</html>",
+        extract=lambda html, **kw: "## Mercer et al. 2018\n\nFindings here.",
+    )
+
+    with patch("coarse.fetch.requests.get", side_effect=mock_get), \
+         patch("coarse.fetch._trafilatura", mock_tra), \
+         patch("coarse.fetch.urllib.request.urlopen", side_effect=Exception("no")), \
+         patch("coarse.fetch.load_config") as mock_cfg:
+        mock_cfg.return_value.unpaywall_email = "test@example.com"
+        result = fetch_paper(
+            title="For Weighting Online Opt-In Samples What Matters Most",
+            url="https://www.pewresearch.org/methods/2018/01/26/for-weighting/",
+            output_dir=str(tmp_path),
+        )
+
+    assert result["path"] is not None
+    assert result["path"].endswith(".md")
+    assert result["fetch_source"] == "url"
+    assert Path(result["path"]).exists()
+    text = Path(result["path"]).read_text(encoding="utf-8")
+    assert "Mercer" in text
+
+
+def test_fetch_paper_url_returns_not_found_when_html_extraction_fails(tmp_path):
+    from coarse.fetch import fetch_paper
+    import types
+
+    def mock_get(url, **kwargs):
+        if "semanticscholar" in url:
+            return _mock_response(status=200, json_data={"data": []})
+        if "openalex" in url:
+            return _mock_response(status=200, json_data={"results": []})
+        return _mock_response(
+            content=b"<html>no pdf</html>",
+            content_type="text/html",
+        )
+
+    mock_tra = types.SimpleNamespace(
+        fetch_url=lambda u: None,   # trafilatura fetch fails
+        extract=lambda html, **kw: None,
+    )
+
+    with patch("coarse.fetch.requests.get", side_effect=mock_get), \
+         patch("coarse.fetch._trafilatura", mock_tra), \
+         patch("coarse.fetch.urllib.request.urlopen", side_effect=Exception("no")), \
+         patch("coarse.fetch.load_config") as mock_cfg:
+        mock_cfg.return_value.unpaywall_email = "test@example.com"
+        result = fetch_paper(
+            title="Some Pew Report",
+            url="https://www.pewresearch.org/methods/unreachable/",
+            output_dir=str(tmp_path),
+        )
+
+    assert result["path"] is None
+    assert result["fetch_source"] == "not_found"
