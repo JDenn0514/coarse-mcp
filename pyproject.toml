@@ -40,7 +40,8 @@ Changelog = "https://github.com/Davidvandijcke/coarse/blob/main/CHANGELOG.md"
 [project.optional-dependencies]
 docling = ["docling>=2.86.0", "transformers>=5.4,<6"]
 formats = ["mammoth>=1.6", "markdownify>=0.12", "ebooklib>=0.18"]
-all = ["coarse-ink[docling]", "coarse-ink[formats]"]
+web = ["trafilatura>=1.6"]
+all = ["coarse-ink[docling]", "coarse-ink[formats]", "coarse-ink[web]"]
 dev = ["pytest>=8.0", "ruff>=0.4"]
 
 [project.scripts]
