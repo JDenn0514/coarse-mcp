@@ -16,6 +16,11 @@ import requests
 
 from coarse.config import load_config
 
+try:
+    import trafilatura as _trafilatura
+except ImportError:
+    _trafilatura = None
+
 logger = logging.getLogger(__name__)
 
 _UNPAYWALL = "https://api.unpaywall.org/v2/{doi}?email={email}"
@@ -39,6 +44,8 @@ _HEADERS = {"User-Agent": "coarse-ink/1.0 (mailto:coarse@example.com)"}
 # Minimum normalized title similarity to accept a resolver result.
 # Prevents wrong-paper matches when keyword search returns unrelated papers.
 _MIN_TITLE_SIMILARITY = 0.6
+# Max sibling pages fetched when crawling multi-page reports (e.g. Pew chapters).
+_MAX_SIBLINGS = 8
 # Patterns for locating PDF links in landing page HTML. Checked in order.
 _PDF_PATTERNS = [
     # Standard academic citation meta tag (journals, Pew, NORC, institutional sites)
@@ -69,6 +76,47 @@ def _extract_pdf_from_landing_page(page_url: str, html: str) -> str | None:
     return None
 
 
+def _discover_sibling_pages(page_url: str, html: str) -> list[str]:
+    """Return sibling page URLs linked from HTML that share the same parent path.
+
+    Detects multi-page reports where each chapter is its own URL (e.g. a Pew
+    methodology report whose sections live at the same date-directory level).
+    Only returns pages at the same path depth as page_url — not sub-pages and
+    not shallower category pages. Capped at _MAX_SIBLINGS.
+    """
+    parsed = urllib.parse.urlparse(page_url)
+    current_path = parsed.path.rstrip("/")
+    if "/" not in current_path.lstrip("/"):
+        return []
+    parent_path = current_path.rsplit("/", 1)[0] + "/"
+    target_depth = current_path.count("/")
+
+    siblings: list[str] = []
+    seen: set[str] = {current_path, current_path + "/"}
+
+    for m in re.finditer(r'href=["\']([^"\'#?][^"\']*)["\']', html, re.IGNORECASE):
+        href = m.group(1)
+        if href.startswith(("mailto:", "javascript:", "tel:")):
+            continue
+        full = urllib.parse.urljoin(page_url, href)
+        fp = urllib.parse.urlparse(full)
+        fp_path = fp.path.rstrip("/")
+        if (
+            fp.netloc == parsed.netloc
+            and fp_path.startswith(parent_path)
+            and fp_path != current_path
+            and fp_path.count("/") == target_depth
+            and fp_path not in seen
+        ):
+            siblings.append(full)
+            seen.add(fp_path)
+            seen.add(fp_path + "/")
+            if len(siblings) >= _MAX_SIBLINGS:
+                break
+
+    return siblings
+
+
 def _resolve_to_pdf(url: str) -> str | None:
     """Confirm url is a PDF or extract a direct PDF link from a landing page.
 
@@ -90,6 +138,55 @@ def _resolve_to_pdf(url: str) -> str | None:
         return _extract_pdf_from_landing_page(url, html)
     except Exception:
         logger.debug("Landing page resolution failed for %s", url, exc_info=True)
+        return None
+
+
+def _fetch_html_as_markdown(
+    url: str,
+    out_dir: Path,
+    slug: str,
+    crawl_siblings: bool = True,
+) -> Path | None:
+    """Fetch URL, extract article text via trafilatura, save as .md.
+
+    When crawl_siblings is True (default), also discovers and fetches sibling
+    pages that share the same parent path (e.g. chapters of a multi-page Pew
+    report) and concatenates their text into a single .md file, separated by
+    horizontal rules.
+
+    Returns the Path of the saved .md file, or None if extraction failed
+    or trafilatura is not installed.
+    """
+    if _trafilatura is None:
+        logger.debug("trafilatura not installed; skipping HTML extraction for %s", url)
+        return None
+    try:
+        html = _trafilatura.fetch_url(url)
+        if not html:
+            return None
+        text = _trafilatura.extract(html, output_format="markdown", include_links=False)
+        if not text:
+            return None
+        sections = [text]
+        if crawl_siblings:
+            for sibling_url in _discover_sibling_pages(url, html):
+                try:
+                    sibling_html = _trafilatura.fetch_url(sibling_url)
+                    if sibling_html:
+                        sibling_text = _trafilatura.extract(
+                            sibling_html, output_format="markdown", include_links=False
+                        )
+                        if sibling_text:
+                            sections.append(f"\n\n---\n\n{sibling_text}")
+                except Exception:
+                    logger.debug(
+                        "Sibling page extraction failed for %s", sibling_url, exc_info=True
+                    )
+        dest = out_dir / f"{slug}.md"
+        dest.write_text("".join(sections), encoding="utf-8")
+        return dest
+    except Exception:
+        logger.debug("HTML extraction failed for %s", url, exc_info=True)
         return None
 
 

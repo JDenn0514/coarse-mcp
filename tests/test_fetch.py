@@ -133,6 +133,139 @@ def test_resolve_to_pdf_returns_none_on_404():
 
 
 # ---------------------------------------------------------------------------
+# _discover_sibling_pages
+# ---------------------------------------------------------------------------
+
+def test_discover_sibling_pages_finds_same_depth_links():
+    from coarse.fetch import _discover_sibling_pages
+    # Simulate Pew report: main page links to sibling section pages
+    html = """
+    <nav>
+      <a href="/methods/2018/01/26/how-different-weighting-methods-work/">Methods</a>
+      <a href="/methods/2018/01/26/reducing-bias-on-benchmarks/">Reducing Bias</a>
+      <a href="/methods/2018/01/27/unrelated-article/">Unrelated (different date)</a>
+      <a href="/methods/2018/">Category page (too shallow)</a>
+      <a href="/methods/2018/01/26/how-different-weighting-methods-work/appendix/">Sub-page (too deep)</a>
+    </nav>
+    """
+    url = "https://www.pewresearch.org/methods/2018/01/26/for-weighting-online-opt-in-samples-what-matters-most/"
+    siblings = _discover_sibling_pages(url, html)
+    assert len(siblings) == 2
+    assert any("how-different-weighting-methods-work" in s for s in siblings)
+    assert any("reducing-bias-on-benchmarks" in s for s in siblings)
+    assert not any("unrelated-article" in s for s in siblings)
+    assert not any("appendix" in s for s in siblings)
+
+
+# ---------------------------------------------------------------------------
+# _fetch_html_as_markdown
+# ---------------------------------------------------------------------------
+
+def test_fetch_html_as_markdown_saves_md_file(tmp_path):
+    from coarse.fetch import _fetch_html_as_markdown
+    import types
+    mock_tra = types.SimpleNamespace(
+        fetch_url=lambda url: "<html>content</html>",
+        extract=lambda html, **kw: "## Article\n\nContent here.",
+    )
+    with patch("coarse.fetch._trafilatura", mock_tra):
+        result = _fetch_html_as_markdown(
+            "https://pew.org/article", tmp_path, "article_slug", crawl_siblings=False
+        )
+    assert result is not None
+    assert result.suffix == ".md"
+    assert result.name == "article_slug.md"
+    assert result.read_text(encoding="utf-8") == "## Article\n\nContent here."
+
+
+def test_fetch_html_as_markdown_returns_none_when_fetch_returns_none(tmp_path):
+    from coarse.fetch import _fetch_html_as_markdown
+    import types
+    mock_tra = types.SimpleNamespace(
+        fetch_url=lambda url: None,
+        extract=lambda html, **kw: "irrelevant",
+    )
+    with patch("coarse.fetch._trafilatura", mock_tra):
+        result = _fetch_html_as_markdown("https://pew.org/article", tmp_path, "slug")
+    assert result is None
+
+
+def test_fetch_html_as_markdown_returns_none_when_extract_returns_none(tmp_path):
+    from coarse.fetch import _fetch_html_as_markdown
+    import types
+    mock_tra = types.SimpleNamespace(
+        fetch_url=lambda url: "<html>content</html>",
+        extract=lambda html, **kw: None,
+    )
+    with patch("coarse.fetch._trafilatura", mock_tra):
+        result = _fetch_html_as_markdown("https://pew.org/article", tmp_path, "slug")
+    assert result is None
+
+
+def test_fetch_html_as_markdown_returns_none_when_trafilatura_not_installed(tmp_path):
+    from coarse.fetch import _fetch_html_as_markdown
+    with patch("coarse.fetch._trafilatura", None):
+        result = _fetch_html_as_markdown("https://pew.org/article", tmp_path, "slug")
+    assert result is None
+
+
+def test_fetch_html_as_markdown_crawls_sibling_pages(tmp_path):
+    """For multi-page reports, sibling pages at the same path depth are fetched."""
+    from coarse.fetch import _fetch_html_as_markdown
+    import types
+
+    main_html = (
+        '<article>Main content.</article>'
+        '<nav><a href="/methods/2018/01/26/section-two/">Section Two</a></nav>'
+    )
+    section_html = "<article>Section two content.</article>"
+
+    fetch_calls = []
+    def mock_fetch(url):
+        fetch_calls.append(url)
+        return section_html if "section-two" in url else main_html
+
+    mock_tra = types.SimpleNamespace(
+        fetch_url=mock_fetch,
+        extract=lambda html, **kw: "extracted: " + ("section-two" if "section-two" in html else "main"),
+    )
+    with patch("coarse.fetch._trafilatura", mock_tra):
+        result = _fetch_html_as_markdown(
+            "https://www.pewresearch.org/methods/2018/01/26/main-article/",
+            tmp_path, "main_article",
+        )
+    assert result is not None
+    content = result.read_text(encoding="utf-8")
+    assert "main" in content
+    assert "section-two" in content   # sibling was concatenated
+    assert len(fetch_calls) == 2      # main + 1 sibling
+
+
+def test_fetch_html_as_markdown_no_sibling_crawl_when_disabled(tmp_path):
+    """crawl_siblings=False fetches only the primary URL."""
+    from coarse.fetch import _fetch_html_as_markdown
+    import types
+
+    main_html = (
+        '<article>Main content.</article>'
+        '<nav><a href="/methods/2018/01/26/section-two/">Section Two</a></nav>'
+    )
+    fetch_calls = []
+    mock_tra = types.SimpleNamespace(
+        fetch_url=lambda url: fetch_calls.append(url) or main_html,
+        extract=lambda html, **kw: "main content only",
+    )
+    with patch("coarse.fetch._trafilatura", mock_tra):
+        result = _fetch_html_as_markdown(
+            "https://www.pewresearch.org/methods/2018/01/26/main-article/",
+            tmp_path, "main_article",
+            crawl_siblings=False,
+        )
+    assert result is not None
+    assert len(fetch_calls) == 1   # only the main page
+
+
+# ---------------------------------------------------------------------------
 # _download HTML guard
 # ---------------------------------------------------------------------------
 
