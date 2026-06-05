@@ -184,16 +184,20 @@ def fetch_paper(
 def extract_paper(
     paper_path: str,
     output_path: str | None = None,
+    force_reextract: bool = False,
 ) -> dict:
     """Convert a PDF to markdown using coarse's extraction infrastructure.
 
-    Uses docling locally for clean PDFs (free). Falls back to Mistral OCR via
-    OpenRouter for scanned documents (incurs cost).
+    Tries Mistral OCR (OpenRouter) first for best quality, then pdf-text
+    (OpenRouter), then Docling locally as a final fallback.
 
     Args:
         paper_path: Absolute path to the PDF file.
         output_path: Where to save the markdown. Defaults to same directory
             as the PDF with a .md extension.
+        force_reextract: If True, ignore any cached extraction and re-run the
+            full extraction pipeline. Use when a previous extraction was poor
+            quality and you want a fresh result.
 
     Returns:
         Dict with keys: path (absolute path to the .md file), garble_ratio
@@ -203,7 +207,7 @@ def extract_paper(
     if not pdf.exists():
         raise FileNotFoundError(f"paper not found: {pdf}")
 
-    result = extract_file(pdf)
+    result = extract_file(pdf, use_cache=not force_reextract)
 
     out = Path(output_path) if output_path else pdf.with_suffix(".md")
     out.write_text(result.full_markdown, encoding="utf-8")
